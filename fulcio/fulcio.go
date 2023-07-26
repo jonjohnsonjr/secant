@@ -75,19 +75,6 @@ func signerFromNewKey() (*SignerVerifier, error) {
 }
 
 func keylessSigner(ctx context.Context, provider OIDCProvider, fulcioClient api.LegacyClient, sv *SignerVerifier) (*SignerVerifier, error) {
-	k, err := fvNewSigner(ctx, fulcioClient, provider, sv)
-	if err != nil {
-		return nil, fmt.Errorf("getting key from Fulcio: %w", err)
-	}
-
-	return &SignerVerifier{
-		cert:           k.cert,
-		chain:          k.chain,
-		SignerVerifier: k,
-	}, nil
-}
-
-func fvNewSigner(ctx context.Context, fulcioClient api.LegacyClient, provider OIDCProvider, signer signature.SignerVerifier) (*SignerVerifier, error) {
 	idToken, err := provider.Provide(ctx, "sigstore")
 	if err != nil {
 		return nil, err
@@ -95,16 +82,9 @@ func fvNewSigner(ctx context.Context, fulcioClient api.LegacyClient, provider OI
 
 	fmt.Fprintln(os.Stderr, "Retrieving signed certificate...")
 
-	resp, err := getCertForOauthID(signer, fulcioClient, idToken)
+	resp, err := getCertForOauthID(sv, fulcioClient, idToken)
 	if err != nil {
 		return nil, fmt.Errorf("retrieving cert: %w", err)
-	}
-
-	f := &SignerVerifier{
-		SignerVerifier: signer,
-		cert:           resp.CertPEM,
-		chain:          resp.ChainPEM,
-		sct:            resp.SCT,
 	}
 
 	// Grab the PublicKeys for the CTFE, either from tuf or env.
@@ -114,11 +94,16 @@ func fvNewSigner(ctx context.Context, fulcioClient api.LegacyClient, provider OI
 	}
 
 	// verify the sct
-	if err := cosign.VerifySCT(ctx, f.cert, f.chain, f.sct, pubKeys); err != nil {
+	if err := cosign.VerifySCT(ctx, resp.CertPEM, resp.ChainPEM, resp.SCT, pubKeys); err != nil {
 		return nil, fmt.Errorf("verifying SCT: %w", err)
 	}
 
-	return f, nil
+	return &SignerVerifier{
+		SignerVerifier: sv,
+		cert:           resp.CertPEM,
+		chain:          resp.ChainPEM,
+		sct:            resp.SCT,
+	}, nil
 }
 
 func getCertForOauthID(sv signature.SignerVerifier, fulcioClient api.LegacyClient, idToken string) (*api.CertificateResponse, error) {
