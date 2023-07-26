@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/sigstore/cosign/v2/pkg/cosign"
 	"github.com/sigstore/fulcio/pkg/api"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/oauthflow"
@@ -29,6 +30,7 @@ type OIDCProvider interface {
 type SignerVerifier struct {
 	cert  []byte
 	chain []byte
+	sct   []byte
 	signature.SignerVerifier
 }
 
@@ -102,6 +104,18 @@ func fvNewSigner(ctx context.Context, fulcioClient api.LegacyClient, provider OI
 		SignerVerifier: signer,
 		cert:           resp.CertPEM,
 		chain:          resp.ChainPEM,
+		sct:            resp.SCT,
+	}
+
+	// Grab the PublicKeys for the CTFE, either from tuf or env.
+	pubKeys, err := cosign.GetCTLogPubs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting CTFE public keys: %w", err)
+	}
+
+	// verify the sct
+	if err := cosign.VerifySCT(ctx, f.cert, f.chain, f.sct, pubKeys); err != nil {
+		return nil, fmt.Errorf("verifying SCT: %w", err)
 	}
 
 	return f, nil
