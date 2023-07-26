@@ -6,13 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
+	"os"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/jonjohnsonjr/secant/intoto"
+	"github.com/jonjohnsonjr/secant/tlog"
 	"github.com/sigstore/cosign/v2/pkg/cosign/attestation"
+	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	cremote "github.com/sigstore/cosign/v2/pkg/cosign/remote"
-	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci/static"
@@ -56,23 +60,23 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*State
 	}, nil
 }
 
-func Attest(ctx context.Context, statement *Statement, sv *SignerVerifier, rekorClient *client.Rekor) (oci.SignedEntity, error) {
+func Attest(ctx context.Context, statement *Statement, sv SignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
 	wrapped := dsse.WrapSigner(sv, types.IntotoPayloadType)
 	dd := cremote.NewDupeDetector(sv)
 
 	signedPayload, err := wrapped.SignMessage(bytes.NewReader(statement.Payload), signatureoptions.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("signing: %w", err)
+		return fmt.Errorf("signing: %w", err)
 	}
 
 	opts := []static.Option{static.WithLayerMediaType(types.DssePayloadType)}
-	if sv.Cert != nil {
-		opts = append(opts, static.WithCertChain(sv.Cert, sv.Chain))
+	if sv.Cert() != nil {
+		opts = append(opts, static.WithCertChain(sv.Cert(), sv.Chain()))
 	}
 
 	predicateType, err := parsePredicateType(statement.Type)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	predicateTypeAnnotation := map[string]string{
@@ -81,16 +85,29 @@ func Attest(ctx context.Context, statement *Statement, sv *SignerVerifier, rekor
 	// Add predicateType as manifest annotation
 	opts = append(opts, static.WithAnnotations(predicateTypeAnnotation))
 
-	// Check whether we should be uploading to the transparency log
-	bundle, err := uploadToTlog(ctx, sv, rekorClient, signedPayload)
+	pemBytes, err := sv.Bytes()
 	if err != nil {
-		return nil, fmt.Errorf("uploading to tlog: %w", err)
+		return err
 	}
+
+	e, err := intoto.Entry(ctx, signedPayload, pemBytes)
+	if err != nil {
+		return err
+	}
+
+	entry, err := tlog.Upload(ctx, rekorClient, e)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(os.Stderr, "tlog entry created with index:", *entry.LogIndex)
+	bundle := cbundle.EntryToBundle(entry)
+
 	opts = append(opts, static.WithBundle(bundle))
 
 	sig, err := static.NewAttestation(signedPayload, opts...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// We don't actually need to access the remote entity to attach things to it
@@ -104,12 +121,33 @@ func Attest(ctx context.Context, statement *Statement, sv *SignerVerifier, rekor
 	signOpts = append(signOpts, mutate.WithReplaceOp(cremote.NewReplaceOp(predicateType)))
 
 	// Attach the attestation to the entity.
-	return mutate.AttachAttestationToEntity(se, sig, signOpts...)
-}
-
-func Upload(ctx context.Context, repo name.Repository, se oci.SignedEntity, ropt []remote.Option) error {
-	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+	se, err = mutate.AttachAttestationToEntity(se, sig, signOpts...)
+	if err != nil {
+		return err
+	}
 
 	// Publish the attestations associated with this entity
-	return ociremote.WriteAttestations(repo, se, opts...)
+	ropts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
+	return ociremote.WriteAttestations(statement.Digest.Repository, se, ropts...)
+}
+
+var predicateTypeMap = map[string]string{
+	"custom":         "https://cosign.sigstore.dev/attestation/v1",
+	"slsaprovenance": "https://slsa.dev/provenance/v0.2",
+	"spdx":           "https://spdx.dev/Document",
+	"spdxjson":       "https://spdx.dev/Document",
+	"cyclonedx":      "https://cyclonedx.org/bom",
+	"link":           "https://in-toto.io/Link/v1",
+	"vuln":           "https://cosign.sigstore.dev/attestation/vuln/v1",
+}
+
+func parsePredicateType(t string) (string, error) {
+	uri, ok := predicateTypeMap[t]
+	if !ok {
+		if _, err := url.ParseRequestURI(t); err != nil {
+			return "", fmt.Errorf("invalid predicate type: %s", t)
+		}
+		uri = t
+	}
+	return uri, nil
 }

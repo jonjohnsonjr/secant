@@ -1,4 +1,4 @@
-package secant
+package tlog
 
 import (
 	"bytes"
@@ -12,8 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -22,53 +20,13 @@ import (
 	"github.com/sigstore/rekor/pkg/generated/client"
 	"github.com/sigstore/rekor/pkg/generated/client/entries"
 	"github.com/sigstore/rekor/pkg/generated/models"
-	rekortypes "github.com/sigstore/rekor/pkg/types"
-	"github.com/sigstore/rekor/pkg/types/intoto"
-	intoto_v001 "github.com/sigstore/rekor/pkg/types/intoto/v0.0.1"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
-	"github.com/sigstore/sigstore/pkg/signature"
 	"github.com/sigstore/sigstore/pkg/tuf"
 	"github.com/transparency-dev/merkle/proof"
 	"github.com/transparency-dev/merkle/rfc6962"
 )
 
-func uploadToTlog(ctx context.Context, sv *SignerVerifier, rekorClient *client.Rekor, signedPayload []byte) (*cbundle.RekorBundle, error) {
-	pemBytes, err := sv.Bytes()
-	if err != nil {
-		return nil, err
-	}
-
-	e, err := intotoEntry(ctx, signedPayload, pemBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	entry, err := doUpload(ctx, rekorClient, e)
-	if err != nil {
-		return nil, err
-	}
-
-	fmt.Fprintln(os.Stderr, "tlog entry created with index:", *entry.LogIndex)
-	return cbundle.EntryToBundle(entry), nil
-}
-
-func intotoEntry(ctx context.Context, signature, pubKey []byte) (models.ProposedEntry, error) {
-	var pubKeyBytes [][]byte
-
-	if len(pubKey) == 0 {
-		return nil, errors.New("none of the Rekor public keys have been found")
-	}
-
-	pubKeyBytes = append(pubKeyBytes, pubKey)
-
-	// t.CreateProposedEntry(ctx, version, props)
-	return rekortypes.NewProposedEntry(ctx, intoto.KIND, intoto_v001.APIVERSION, rekortypes.ArtifactProperties{
-		ArtifactBytes:  signature,
-		PublicKeyBytes: pubKeyBytes,
-	})
-}
-
-func doUpload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEntry) (*models.LogEntryAnon, error) {
+func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEntry) (*models.LogEntryAnon, error) {
 	params := entries.NewCreateLogEntryParamsWithContext(ctx)
 	params.SetProposedEntry(pe)
 	resp, err := rekorClient.Entries.CreateLogEntry(params)
@@ -96,25 +54,6 @@ func doUpload(ctx context.Context, rekorClient *client.Rekor, pe models.Proposed
 		return &p, nil
 	}
 	return nil, errors.New("bad response from server")
-}
-
-type SignerVerifier struct {
-	Cert  []byte
-	Chain []byte
-	signature.SignerVerifier
-}
-
-func (c *SignerVerifier) Bytes() ([]byte, error) {
-	if c.Cert != nil {
-		fmt.Fprintf(os.Stderr, "using ephemeral certificate:\n%s\n", string(c.Cert))
-		return c.Cert, nil
-	}
-
-	pemBytes, err := publicKeyPem(c)
-	if err != nil {
-		return nil, err
-	}
-	return pemBytes, nil
 }
 
 func getTlogEntry(ctx context.Context, rekorClient *client.Rekor, entryUUID string) (*models.LogEntryAnon, error) {
@@ -372,33 +311,4 @@ func getTreeUUID(entryUUID string) (string, error) {
 	default:
 		return "", fmt.Errorf("invalid ID len %v for %v", len(entryUUID), entryUUID)
 	}
-}
-
-var predicateTypeMap = map[string]string{
-	"custom":         "https://cosign.sigstore.dev/attestation/v1",
-	"slsaprovenance": "https://slsa.dev/provenance/v0.2",
-	"spdx":           "https://spdx.dev/Document",
-	"spdxjson":       "https://spdx.dev/Document",
-	"cyclonedx":      "https://cyclonedx.org/bom",
-	"link":           "https://in-toto.io/Link/v1",
-	"vuln":           "https://cosign.sigstore.dev/attestation/vuln/v1",
-}
-
-func parsePredicateType(t string) (string, error) {
-	uri, ok := predicateTypeMap[t]
-	if !ok {
-		if _, err := url.ParseRequestURI(t); err != nil {
-			return "", fmt.Errorf("invalid predicate type: %s", t)
-		}
-		uri = t
-	}
-	return uri, nil
-}
-
-func publicKeyPem(key signature.PublicKeyProvider) ([]byte, error) {
-	pub, err := key.PublicKey()
-	if err != nil {
-		return nil, err
-	}
-	return cryptoutils.MarshalPublicKeyToPEM(pub)
 }
