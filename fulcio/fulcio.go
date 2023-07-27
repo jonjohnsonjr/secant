@@ -7,16 +7,23 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/sigstore/cosign/v2/pkg/cosign"
+	"github.com/sigstore/cosign/v2/pkg/oci"
+	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 	"github.com/sigstore/fulcio/pkg/api"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/oauthflow"
 	"github.com/sigstore/sigstore/pkg/signature"
 	"golang.org/x/oauth2"
 )
+
+type Cosigner interface {
+	Cosign(context.Context, io.Reader) (oci.Signature, crypto.PublicKey, error)
+}
 
 // OIDCProvider is what providers need to implement to participate in furnishing OIDC tokens.
 type OIDCProvider interface {
@@ -135,4 +142,34 @@ func getCertForOauthID(sv signature.SignerVerifier, fulcioClient api.LegacyClien
 	}
 
 	return fulcioClient.SigningCert(cr, tok.RawString)
+}
+
+type signerWrapper struct {
+	inner Cosigner
+	cert  []byte
+	chain []byte
+}
+
+// Cosign implements Cosigner.
+func (s *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, crypto.PublicKey, error) {
+	sig, pub, err := s.inner.Cosign(ctx, payload)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// TODO(dekkagaijin): move the fulcio SignerVerifier logic here
+	newSig, err := mutate.Signature(sig, mutate.WithCertChain(s.cert, s.chain))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return newSig, pub, nil
+}
+
+func NewCosigner(inner Cosigner, cert, chain []byte) Cosigner {
+	return &signerWrapper{
+		inner: inner,
+		cert:  cert,
+		chain: chain,
+	}
 }
