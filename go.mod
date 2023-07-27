@@ -8,7 +8,7 @@ require (
 	github.com/go-openapi/swag v0.22.4
 	github.com/google/go-containerregistry v0.15.2
 	github.com/sigstore/cosign/v2 v2.1.1
-	github.com/sigstore/fulcio v1.4.0
+	github.com/sigstore/fulcio v1.3.1
 	github.com/sigstore/rekor v1.2.2
 	github.com/sigstore/sigstore v1.7.1
 	github.com/transparency-dev/merkle v0.0.2
