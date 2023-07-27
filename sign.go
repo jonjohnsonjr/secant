@@ -8,8 +8,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/jonjohnsonjr/secant/fulcio"
 	"github.com/jonjohnsonjr/secant/rekor"
+	"github.com/jonjohnsonjr/secant/types"
 	cremote "github.com/sigstore/cosign/v2/pkg/cosign/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
@@ -19,11 +19,9 @@ import (
 	sigPayload "github.com/sigstore/sigstore/pkg/signature/payload"
 )
 
-func Sign(ctx context.Context, annotations map[string]interface{}, sv SignerVerifier, rekorClient *client.Rekor, imgs []string, ropt []remote.Option) error {
+func Sign(ctx context.Context, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []string, ropt []remote.Option) error {
 	dd := cremote.NewDupeDetector(sv)
-	cs := NewCosigner(sv)
-	cs = fulcio.NewCosigner(cs, sv.Cert(), sv.Chain())
-	cs = rekor.NewCosigner(cs, rekorClient)
+	cs := rekor.NewCosigner(sv, rekorClient)
 
 	opts := []ociremote.Option{ociremote.WithRemoteOptions(ropt...)}
 
@@ -57,7 +55,7 @@ func Sign(ctx context.Context, annotations map[string]interface{}, sv SignerVeri
 	return nil
 }
 
-func signDigest(ctx context.Context, digest name.Digest, annotations map[string]interface{}, dd mutate.DupeDetector, cs Cosigner, se oci.SignedEntity, opts []ociremote.Option) error {
+func signDigest(ctx context.Context, digest name.Digest, annotations map[string]interface{}, dd mutate.DupeDetector, cs types.Cosigner, se oci.SignedEntity, opts []ociremote.Option) error {
 	payload, err := (&sigPayload.Cosign{
 		Image:       digest,
 		Annotations: annotations,

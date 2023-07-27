@@ -18,13 +18,13 @@ import (
 	"context"
 	"crypto"
 	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
 
-	"github.com/jonjohnsonjr/secant/rekord"
+	"github.com/jonjohnsonjr/secant/models/rekord"
 	"github.com/jonjohnsonjr/secant/tlog"
+	"github.com/jonjohnsonjr/secant/types"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	"github.com/sigstore/cosign/v2/pkg/oci"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
@@ -33,18 +33,14 @@ import (
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 )
 
-type Cosigner interface {
-	Cosign(context.Context, io.Reader) (oci.Signature, crypto.PublicKey, error)
-}
-
 // signerWrapper calls a wrapped, inner signer then uploads either the Cert or Pub(licKey) of the results to Rekor, then adds the resulting `Bundle`
 type signerWrapper struct {
-	inner Cosigner
+	inner types.Cosigner
 
-	rClient *client.Rekor
+	client *client.Rekor
 }
 
-var _ Cosigner = (*signerWrapper)(nil)
+var _ types.Cosigner = (*signerWrapper)(nil)
 
 // Cosign implements Cosigner.
 func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, crypto.PublicKey, error) {
@@ -57,11 +53,7 @@ func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Sig
 	if err != nil {
 		return nil, nil, err
 	}
-	b64Sig, err := sig.Base64Signature()
-	if err != nil {
-		return nil, nil, err
-	}
-	sigBytes, err := base64.StdEncoding.DecodeString(b64Sig)
+	sigBytes, err := sig.Signature()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -89,7 +81,7 @@ func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Sig
 
 	pe := rekord.Entry(checkSum, sigBytes, rekorBytes)
 
-	entry, err := tlog.Upload(ctx, rs.rClient, pe)
+	entry, err := tlog.Upload(ctx, rs.client, pe)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -109,9 +101,9 @@ func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Sig
 }
 
 // NewCosigner returns a Cosigner which uploads the signature to Rekor
-func NewCosigner(inner Cosigner, rClient *client.Rekor) Cosigner {
+func NewCosigner(inner types.Cosigner, client *client.Rekor) types.Cosigner {
 	return &signerWrapper{
-		inner:   inner,
-		rClient: rClient,
+		inner:  inner,
+		client: client,
 	}
 }

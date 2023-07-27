@@ -3,6 +3,7 @@ package secant
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,27 +13,24 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/jonjohnsonjr/secant/intoto"
+	"github.com/jonjohnsonjr/secant/models/intoto"
 	"github.com/jonjohnsonjr/secant/tlog"
+	"github.com/jonjohnsonjr/secant/types"
+	"github.com/secure-systems-lab/go-securesystemslib/dsse"
 	"github.com/sigstore/cosign/v2/pkg/cosign/attestation"
 	cbundle "github.com/sigstore/cosign/v2/pkg/cosign/bundle"
 	cremote "github.com/sigstore/cosign/v2/pkg/cosign/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 	ociremote "github.com/sigstore/cosign/v2/pkg/oci/remote"
 	"github.com/sigstore/cosign/v2/pkg/oci/static"
-	"github.com/sigstore/cosign/v2/pkg/types"
+	ctypes "github.com/sigstore/cosign/v2/pkg/types"
 	"github.com/sigstore/rekor/pkg/generated/client"
-	"github.com/sigstore/sigstore/pkg/signature/dsse"
-	signatureoptions "github.com/sigstore/sigstore/pkg/signature/options"
+	"github.com/sigstore/sigstore/pkg/cryptoutils"
+	"github.com/sigstore/sigstore/pkg/signature/options"
 )
 
-type Statement struct {
-	Digest  name.Digest
-	Type    string
-	Payload []byte
-}
-
-func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*Statement, error) {
+// NewStatement generates a statement for use in Attest.
+func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*types.Statement, error) {
 	h, err := v1.NewHash(digest.Identifier())
 	if err != nil {
 		return nil, err
@@ -53,44 +51,58 @@ func NewStatement(digest name.Digest, predicate io.Reader, ptype string) (*State
 		return nil, fmt.Errorf("marshaling statement: %w", err)
 	}
 
-	return &Statement{
+	return &types.Statement{
 		Digest:  digest,
 		Type:    ptype,
 		Payload: payload,
 	}, nil
 }
 
-func Attest(ctx context.Context, statement *Statement, sv SignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
-	wrapped := dsse.WrapSigner(sv, types.IntotoPayloadType)
-	dd := cremote.NewDupeDetector(sv)
-
-	signedPayload, err := wrapped.SignMessage(bytes.NewReader(statement.Payload), signatureoptions.WithContext(ctx))
-	if err != nil {
-		return fmt.Errorf("signing: %w", err)
-	}
-
-	opts := []static.Option{static.WithLayerMediaType(types.DssePayloadType)}
-	if sv.Cert() != nil {
-		opts = append(opts, static.WithCertChain(sv.Cert(), sv.Chain()))
-	}
-
-	predicateType, err := parsePredicateType(statement.Type)
+// Attest is roughly equivalent to cosign attest.
+// The only real implementation of types.CosignerSignerVerifier is fulcio.SignerVerifier.
+func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSignerVerifier, rekorClient *client.Rekor, ropt []remote.Option) error {
+	pae := dsse.PAE(ctypes.IntotoPayloadType, statement.Payload)
+	signed, err := sv.SignMessage(bytes.NewReader(pae), options.WithContext(ctx))
 	if err != nil {
 		return err
 	}
 
-	predicateTypeAnnotation := map[string]string{
-		"predicateType": predicateType,
+	env := dsse.Envelope{
+		PayloadType: ctypes.IntotoPayloadType,
+		Payload:     base64.StdEncoding.EncodeToString(statement.Payload),
+		Signatures: []dsse.Signature{
+			{
+				Sig: base64.StdEncoding.EncodeToString(signed),
+			},
+		},
 	}
-	// Add predicateType as manifest annotation
-	opts = append(opts, static.WithAnnotations(predicateTypeAnnotation))
-
-	pemBytes, err := sv.Bytes()
+	envelope, err := json.Marshal(env)
 	if err != nil {
 		return err
 	}
 
-	e, err := intoto.Entry(ctx, signedPayload, pemBytes)
+	// Use the inner Cosigner to safely generate a valid sig, then graft its values on our attestation.
+	ociSig, _, err := sv.Cosign(ctx, bytes.NewReader(envelope))
+	if err != nil {
+		return err
+	}
+
+	cert, err := ociSig.Cert()
+	if err != nil {
+		return err
+	}
+
+	chains, err := ociSig.Chain()
+	if err != nil {
+		return err
+	}
+
+	chain, err := cryptoutils.MarshalCertificatesToPEM(chains)
+	if err != nil {
+		return err
+	}
+
+	e, err := intoto.Entry(ctx, envelope, cert.Raw)
 	if err != nil {
 		return err
 	}
@@ -103,9 +115,21 @@ func Attest(ctx context.Context, statement *Statement, sv SignerVerifier, rekorC
 	fmt.Fprintln(os.Stderr, "tlog entry created with index:", *entry.LogIndex)
 	bundle := cbundle.EntryToBundle(entry)
 
-	opts = append(opts, static.WithBundle(bundle))
+	predicateType, err := parsePredicateType(statement.Type)
+	if err != nil {
+		return err
+	}
 
-	sig, err := static.NewAttestation(signedPayload, opts...)
+	opts := []static.Option{
+		static.WithCertChain(cert.Raw, chain),
+		static.WithBundle(bundle),
+		static.WithLayerMediaType(ctypes.DssePayloadType),
+		static.WithAnnotations(map[string]string{
+			"predicateType": predicateType,
+		}),
+	}
+
+	att, err := static.NewAttestation(envelope, opts...)
 	if err != nil {
 		return err
 	}
@@ -115,13 +139,12 @@ func Attest(ctx context.Context, statement *Statement, sv SignerVerifier, rekorC
 	se := ociremote.SignedUnknown(statement.Digest)
 
 	signOpts := []mutate.SignOption{
-		mutate.WithDupeDetector(dd),
+		mutate.WithDupeDetector(cremote.NewDupeDetector(sv)),
+		mutate.WithReplaceOp(cremote.NewReplaceOp(predicateType)),
 	}
 
-	signOpts = append(signOpts, mutate.WithReplaceOp(cremote.NewReplaceOp(predicateType)))
-
 	// Attach the attestation to the entity.
-	se, err = mutate.AttachAttestationToEntity(se, sig, signOpts...)
+	se, err = mutate.AttachAttestationToEntity(se, att, signOpts...)
 	if err != nil {
 		return err
 	}

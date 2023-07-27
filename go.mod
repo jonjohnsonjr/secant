@@ -6,6 +6,7 @@ require (
 	github.com/cyberphone/json-canonicalization v0.0.0-20220623050100-57a0ce2678a7
 	github.com/go-openapi/strfmt v0.21.7
 	github.com/go-openapi/swag v0.22.4
+	github.com/google/certificate-transparency-go v1.1.6
 	github.com/google/go-containerregistry v0.15.2
 	github.com/sigstore/cosign/v2 v2.1.1
 	github.com/sigstore/fulcio v1.3.1
@@ -45,7 +46,6 @@ require (
 	github.com/go-playground/validator/v10 v10.14.1 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/certificate-transparency-go v1.1.6 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/in-toto/in-toto-golang v0.9.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
