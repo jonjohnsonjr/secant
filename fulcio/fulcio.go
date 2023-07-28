@@ -88,7 +88,7 @@ func NewSigner(ctx context.Context, provider OIDCProvider, fulcioClient api.Lega
 }
 
 func (sv *SignerVerifier) refresh(ctx context.Context) error {
-	if time.Now().Before(sv.cert.NotAfter) {
+	if sv.cert != nil && time.Now().Before(sv.cert.NotAfter) {
 		return nil
 	}
 
