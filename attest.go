@@ -64,7 +64,7 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 	pae := dsse.PAE(ctypes.IntotoPayloadType, statement.Payload)
 	signed, err := sv.SignMessage(bytes.NewReader(pae), options.WithContext(ctx))
 	if err != nil {
-		return err
+		return fmt.Errorf("signing pae: %w", err)
 	}
 
 	env := dsse.Envelope{
@@ -76,15 +76,16 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 			},
 		},
 	}
+
 	envelope, err := json.Marshal(env)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling envelope: %w", err)
 	}
 
 	// Use the inner Cosigner to safely generate a valid sig, then graft its values on our attestation.
 	ociSig, _, err := sv.Cosign(ctx, bytes.NewReader(envelope))
 	if err != nil {
-		return err
+		return fmt.Errorf("signing envelope: %w", err)
 	}
 
 	cert, err := ociSig.Cert()
@@ -92,24 +93,29 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 		return err
 	}
 
-	chains, err := ociSig.Chain()
+	rawCert, err := cryptoutils.MarshalCertificateToPEM(cert)
 	if err != nil {
 		return err
 	}
 
-	chain, err := cryptoutils.MarshalCertificatesToPEM(chains)
+	chain, err := ociSig.Chain()
 	if err != nil {
 		return err
 	}
 
-	e, err := intoto.Entry(ctx, envelope, cert.Raw)
+	rawChain, err := cryptoutils.MarshalCertificatesToPEM(chain)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshaling chain: %w", err)
+	}
+
+	e, err := intoto.Entry(ctx, envelope, rawCert)
+	if err != nil {
+		return fmt.Errorf("creating intoto entry: %w", err)
 	}
 
 	entry, err := tlog.Upload(ctx, rekorClient, e)
 	if err != nil {
-		return err
+		return fmt.Errorf("uploading to rekor: %w", err)
 	}
 
 	fmt.Fprintln(os.Stderr, "tlog entry created with index:", *entry.LogIndex)
@@ -121,7 +127,7 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 	}
 
 	opts := []static.Option{
-		static.WithCertChain(cert.Raw, chain),
+		static.WithCertChain(rawCert, rawChain),
 		static.WithBundle(bundle),
 		static.WithLayerMediaType(ctypes.DssePayloadType),
 		static.WithAnnotations(map[string]string{

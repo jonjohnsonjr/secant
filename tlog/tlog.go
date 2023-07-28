@@ -47,7 +47,7 @@ func Upload(ctx context.Context, rekorClient *client.Rekor, pe models.ProposedEn
 			}
 			return e, verifyTLogEntryOffline(ctx, e, rekorPubsFromAPI)
 		}
-		return nil, err
+		return nil, fmt.Errorf("creating log entry: %w", err)
 	}
 	// UUID is at the end of location
 	for _, p := range resp.Payload {
