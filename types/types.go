@@ -2,7 +2,6 @@ package types
 
 import (
 	"context"
-	"crypto"
 	"io"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -11,7 +10,7 @@ import (
 )
 
 type Cosigner interface {
-	Cosign(context.Context, io.Reader) (oci.Signature, crypto.PublicKey, error)
+	Cosign(context.Context, io.Reader) (oci.Signature, []byte, error)
 }
 
 type CosignerSigner interface {

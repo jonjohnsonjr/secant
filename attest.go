@@ -83,7 +83,7 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 	}
 
 	// Use the inner Cosigner to safely generate a valid sig, then graft its values on our attestation.
-	ociSig, _, err := sv.Cosign(ctx, bytes.NewReader(envelope))
+	ociSig, pemBytes, err := sv.Cosign(ctx, bytes.NewReader(envelope))
 	if err != nil {
 		return fmt.Errorf("signing envelope: %w", err)
 	}
@@ -108,7 +108,7 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 		return fmt.Errorf("marshaling chain: %w", err)
 	}
 
-	e, err := intoto.Entry(ctx, envelope, rawCert)
+	e, err := intoto.Entry(ctx, envelope, pemBytes)
 	if err != nil {
 		return fmt.Errorf("creating intoto entry: %w", err)
 	}

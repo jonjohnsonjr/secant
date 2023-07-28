@@ -16,7 +16,6 @@ package rekor
 
 import (
 	"context"
-	"crypto"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -43,7 +42,7 @@ type signerWrapper struct {
 var _ types.Cosigner = (*signerWrapper)(nil)
 
 // Cosign implements Cosigner.
-func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, crypto.PublicKey, error) {
+func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, []byte, error) {
 	sig, pub, err := rs.inner.Cosign(ctx, payload)
 	if err != nil {
 		return nil, nil, err
@@ -97,7 +96,7 @@ func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Sig
 		return nil, nil, err
 	}
 
-	return newSig, pub, nil
+	return newSig, rekorBytes, nil
 }
 
 // NewCosigner returns a Cosigner which uploads the signature to Rekor

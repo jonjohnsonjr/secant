@@ -185,7 +185,7 @@ func (sv *SignerVerifier) PublicKey(opts ...signature.PublicKeyOption) (crypto.P
 }
 
 // Cosign implements Cosigner.
-func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, crypto.PublicKey, error) {
+func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, []byte, error) {
 	sv.Lock()
 	defer sv.Unlock()
 
@@ -204,11 +204,6 @@ func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Si
 		return nil, nil, err
 	}
 
-	pub, err := sv.inner.PublicKey()
-	if err != nil {
-		return nil, nil, err
-	}
-
 	sig, err := static.NewSignature(payloadBytes, base64.StdEncoding.EncodeToString(signed))
 	if err != nil {
 		return nil, nil, err
@@ -220,5 +215,5 @@ func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Si
 		return nil, nil, err
 	}
 
-	return newSig, pub, nil
+	return newSig, sv.certPEM, nil
 }
