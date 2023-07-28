@@ -8,6 +8,7 @@ require (
 	github.com/go-openapi/swag v0.22.4
 	github.com/google/certificate-transparency-go v1.1.6
 	github.com/google/go-containerregistry v0.15.2
+	github.com/secure-systems-lab/go-securesystemslib v0.6.0
 	github.com/sigstore/cosign/v2 v2.1.1
 	github.com/sigstore/fulcio v1.3.1
 	github.com/sigstore/rekor v1.2.2
@@ -68,7 +69,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/sassoftware/relic v7.2.1+incompatible // indirect
-	github.com/secure-systems-lab/go-securesystemslib v0.6.0 // indirect
 	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/sigstore/timestamp-authority v1.1.1 // indirect
