@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"os"
 
@@ -83,12 +84,12 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 	}
 
 	// Use the inner Cosigner to safely generate a valid sig, then graft its values on our attestation.
-	ociSig, pemBytes, err := sv.Cosign(ctx, bytes.NewReader(envelope))
+	sig, err := sv.Cosign(ctx, bytes.NewReader(envelope))
 	if err != nil {
 		return fmt.Errorf("signing envelope: %w", err)
 	}
 
-	cert, err := ociSig.Cert()
+	cert, err := sig.Cert()
 	if err != nil {
 		return err
 	}
@@ -98,7 +99,7 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 		return err
 	}
 
-	chain, err := ociSig.Chain()
+	chain, err := sig.Chain()
 	if err != nil {
 		return err
 	}
@@ -108,10 +109,13 @@ func Attest(ctx context.Context, statement *types.Statement, sv types.CosignerSi
 		return fmt.Errorf("marshaling chain: %w", err)
 	}
 
-	e, err := intoto.Entry(ctx, envelope, pemBytes)
+	e, err := intoto.Entry(ctx, envelope, rawCert)
 	if err != nil {
 		return fmt.Errorf("creating intoto entry: %w", err)
 	}
+
+	log.Printf("debug envelope:\n%s", string(envelope))
+	log.Printf("debug rawCert:\n%s", string(rawCert))
 
 	entry, err := tlog.Upload(ctx, rekorClient, e)
 	if err != nil {

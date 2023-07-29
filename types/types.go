@@ -10,7 +10,7 @@ import (
 )
 
 type Cosigner interface {
-	Cosign(context.Context, io.Reader) (oci.Signature, []byte, error)
+	Cosign(context.Context, io.Reader) (oci.Signature, error)
 }
 
 type CosignerSigner interface {

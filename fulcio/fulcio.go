@@ -16,11 +16,11 @@ import (
 	"time"
 
 	"github.com/google/certificate-transparency-go/x509"
+	"github.com/jonjohnsonjr/secant/types"
 
 	"github.com/google/certificate-transparency-go/x509util"
 	"github.com/sigstore/cosign/v2/pkg/cosign"
 	"github.com/sigstore/cosign/v2/pkg/oci"
-	"github.com/sigstore/cosign/v2/pkg/oci/mutate"
 	"github.com/sigstore/cosign/v2/pkg/oci/static"
 	"github.com/sigstore/fulcio/pkg/api"
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
@@ -28,6 +28,8 @@ import (
 	"github.com/sigstore/sigstore/pkg/signature"
 	"golang.org/x/oauth2"
 )
+
+var _ types.CosignerSignerVerifier = (*SignerVerifier)(nil)
 
 // OIDCProvider is what providers need to implement to participate in furnishing OIDC tokens.
 type OIDCProvider interface {
@@ -52,18 +54,6 @@ type SignerVerifier struct {
 	certPEM []byte
 	chain   []byte
 	sct     []byte
-}
-
-func (c *SignerVerifier) Cert() []byte {
-	return c.certPEM
-}
-
-func (c *SignerVerifier) Chain() []byte {
-	return c.chain
-}
-
-func (c *SignerVerifier) Bytes() ([]byte, error) {
-	return c.certPEM, nil
 }
 
 // NewSigner returns a "keyless" fulcio signer.
@@ -185,35 +175,29 @@ func (sv *SignerVerifier) PublicKey(opts ...signature.PublicKeyOption) (crypto.P
 }
 
 // Cosign implements Cosigner.
-func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, []byte, error) {
+func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, error) {
 	sv.Lock()
 	defer sv.Unlock()
 
 	if time.Now().After(sv.cert.NotAfter) {
 		if err := sv.refresh(ctx); err != nil {
-			return nil, nil, fmt.Errorf("refreshing fulcio cert: %w", err)
+			return nil, fmt.Errorf("refreshing fulcio cert: %w", err)
 		}
 	}
 
 	payloadBytes, err := io.ReadAll(payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	signed, err := sv.inner.SignMessage(bytes.NewReader(payloadBytes))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	sig, err := static.NewSignature(payloadBytes, base64.StdEncoding.EncodeToString(signed))
+	sig, err := static.NewSignature(payloadBytes, base64.StdEncoding.EncodeToString(signed), static.WithCertChain(sv.certPEM, sv.chain))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// TODO(dekkagaijin): move the fulcio SignerVerifier logic here
-	newSig, err := mutate.Signature(sig, mutate.WithCertChain(sv.certPEM, sv.chain))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return newSig, sv.certPEM, nil
+	return sig, nil
 }

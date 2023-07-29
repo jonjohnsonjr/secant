@@ -42,61 +42,56 @@ type signerWrapper struct {
 var _ types.Cosigner = (*signerWrapper)(nil)
 
 // Cosign implements Cosigner.
-func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, []byte, error) {
-	sig, pub, err := rs.inner.Cosign(ctx, payload)
+func (rs *signerWrapper) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, error) {
+	sig, err := rs.inner.Cosign(ctx, payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	payloadBytes, err := sig.Payload()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	sigBytes, err := sig.Signature()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Upload the cert or the public key, depending on what we have
 	cert, err := sig.Cert()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	var rekorBytes []byte
-	if cert != nil {
-		rekorBytes, err = cryptoutils.MarshalCertificateToPEM(cert)
-	} else {
-		rekorBytes, err = cryptoutils.MarshalPublicKeyToPEM(pub)
-	}
+	rekorBytes, err := cryptoutils.MarshalCertificateToPEM(cert)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	checkSum := sha256.New()
 	if _, err := checkSum.Write(payloadBytes); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	pe := rekord.Entry(checkSum, sigBytes, rekorBytes)
 
 	entry, err := tlog.Upload(ctx, rs.client, pe)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	fmt.Fprintln(os.Stderr, "tlog entry created with index:", *entry.LogIndex)
 	bundle, err := cbundle.EntryToBundle(entry), nil
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	newSig, err := mutate.Signature(sig, mutate.WithBundle(bundle))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return newSig, rekorBytes, nil
+	return newSig, nil
 }
 
 // NewCosigner returns a Cosigner which uploads the signature to Rekor

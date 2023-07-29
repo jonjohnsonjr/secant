@@ -64,7 +64,7 @@ func signDigest(ctx context.Context, digest name.Digest, annotations map[string]
 		return fmt.Errorf("payload: %w", err)
 	}
 
-	ociSig, _, err := cs.Cosign(ctx, bytes.NewReader(payload))
+	ociSig, err := cs.Cosign(ctx, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
