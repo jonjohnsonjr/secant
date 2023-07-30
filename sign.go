@@ -19,6 +19,7 @@ import (
 	sigPayload "github.com/sigstore/sigstore/pkg/signature/payload"
 )
 
+// Sign is roughly equivalent to cosign sign.
 func Sign(ctx context.Context, annotations map[string]interface{}, sv types.CosignerVerifier, rekorClient *client.Rekor, imgs []string, ropt []remote.Option) error {
 	dd := cremote.NewDupeDetector(sv)
 	cs := rekor.NewCosigner(sv, rekorClient)

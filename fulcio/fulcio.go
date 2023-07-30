@@ -26,10 +26,13 @@ import (
 	"github.com/sigstore/sigstore/pkg/cryptoutils"
 	"github.com/sigstore/sigstore/pkg/oauthflow"
 	"github.com/sigstore/sigstore/pkg/signature"
+	"github.com/sigstore/sigstore/pkg/signature/options"
 	"golang.org/x/oauth2"
 )
 
 var _ types.CosignerSignerVerifier = (*SignerVerifier)(nil)
+
+var timeBuffer = time.Second * 30
 
 // OIDCProvider is what providers need to implement to participate in furnishing OIDC tokens.
 type OIDCProvider interface {
@@ -147,22 +150,6 @@ func (sv *SignerVerifier) refresh(ctx context.Context) error {
 }
 
 func (sv *SignerVerifier) SignMessage(message io.Reader, opts ...signature.SignOption) ([]byte, error) {
-	sv.Lock()
-	defer sv.Unlock()
-
-	if time.Now().After(sv.cert.NotAfter) {
-		// If we are passed a signature.WithContext option, this will pull it out.
-		// Otherwise, it defaults to context.Background().
-		ctx := context.Background()
-		for _, opt := range opts {
-			opt.ApplyContext(&ctx)
-		}
-
-		if err := sv.refresh(ctx); err != nil {
-			return nil, fmt.Errorf("refreshing fulcio cert: %w", err)
-		}
-	}
-
 	return sv.inner.SignMessage(message, opts...)
 }
 
@@ -174,24 +161,23 @@ func (sv *SignerVerifier) PublicKey(opts ...signature.PublicKeyOption) (crypto.P
 	return sv.inner.PublicKey(opts...)
 }
 
-// Cosign implements Cosigner.
 func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Signature, error) {
-	sv.Lock()
-	defer sv.Unlock()
-
-	if time.Now().After(sv.cert.NotAfter) {
-		if err := sv.refresh(ctx); err != nil {
-			return nil, fmt.Errorf("refreshing fulcio cert: %w", err)
-		}
-	}
-
 	payloadBytes, err := io.ReadAll(payload)
 	if err != nil {
 		return nil, err
 	}
-	signed, err := sv.inner.SignMessage(bytes.NewReader(payloadBytes))
+	signed, err := sv.inner.SignMessage(bytes.NewReader(payloadBytes), options.WithContext(ctx))
 	if err != nil {
 		return nil, err
+	}
+
+	sv.Lock()
+	defer sv.Unlock()
+
+	if time.Now().Add(timeBuffer).After(sv.cert.NotAfter) {
+		if err := sv.refresh(ctx); err != nil {
+			return nil, fmt.Errorf("refreshing fulcio cert: %w", err)
+		}
 	}
 
 	sig, err := static.NewSignature(payloadBytes, base64.StdEncoding.EncodeToString(signed), static.WithCertChain(sv.certPEM, sv.chain))
