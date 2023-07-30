@@ -58,7 +58,7 @@ type SignerVerifier struct {
 }
 
 // NewSigner returns a "keyless" fulcio signer.
-func NewSigner(ctx context.Context, provider OIDCProvider, fulcioClient api.LegacyClient) (*SignerVerifier, error) {
+func NewSigner(provider OIDCProvider, fulcioClient api.LegacyClient) (*SignerVerifier, error) {
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generating cert: %w", err)
@@ -75,7 +75,7 @@ func NewSigner(ctx context.Context, provider OIDCProvider, fulcioClient api.Lega
 		fulcioClient: fulcioClient,
 	}
 
-	return sv, sv.refresh(ctx)
+	return sv, nil
 }
 
 func (sv *SignerVerifier) refresh(ctx context.Context) error {
