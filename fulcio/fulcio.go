@@ -32,8 +32,6 @@ import (
 
 var _ types.CosignerSignerVerifier = (*SignerVerifier)(nil)
 
-var timeBuffer = time.Second * 30
-
 // OIDCProvider is what providers need to implement to participate in furnishing OIDC tokens.
 type OIDCProvider interface {
 	// Enabled returns true if the provider is enabled.
@@ -81,10 +79,6 @@ func NewSigner(ctx context.Context, provider OIDCProvider, fulcioClient api.Lega
 }
 
 func (sv *SignerVerifier) refresh(ctx context.Context) error {
-	if sv.cert != nil && time.Now().Before(sv.cert.NotAfter) {
-		return nil
-	}
-
 	idToken, err := sv.provider.Provide(ctx, "sigstore")
 	if err != nil {
 		return err
@@ -174,7 +168,9 @@ func (sv *SignerVerifier) Cosign(ctx context.Context, payload io.Reader) (oci.Si
 	sv.Lock()
 	defer sv.Unlock()
 
-	if time.Now().Add(timeBuffer).After(sv.cert.NotAfter) {
+	// If this is our first cert or the cert is expired, we need to hit fulcio.
+	// Add 30 seconds of buffer to account for clock skew (gitsign does the same).
+	if sv.cert == nil || time.Now().Add(time.Second*30).After(sv.cert.NotAfter) {
 		if err := sv.refresh(ctx); err != nil {
 			return nil, fmt.Errorf("refreshing fulcio cert: %w", err)
 		}
